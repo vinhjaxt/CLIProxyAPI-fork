@@ -1,0 +1,63 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  docker_arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Refresh models catalog
+        run: |
+          git fetch --depth 1 https://github.com/router-for-me/models.git main
+          git show FETCH_HEAD:models.json > internal/registry/models/models.json
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Generate Build Metadata
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_ENV
+          echo COMMIT=`git rev-parse --short HEAD` >> $GITHUB_ENV
+          echo BUILD_DATE=`date -u +%Y-%m-%dT%H:%M:%SZ` >> $GITHUB_ENV
+      - name: Build and push (arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          push: false
+          load: true
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            COMMIT=${{ env.COMMIT }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+          tags: |
+            eceasy/cli-proxy-api:latest-arm64
+            eceasy/cli-proxy-api:latest
+            eceasy/cli-proxy-api:${{ env.VERSION }}-arm64
+
+      # Create release
+      - name: Generate release tag
+        id: tag
+        run: |
+          sudo timedatectl set-timezone Asia/Ho_Chi_Minh
+          sudo date -s "$(wget -qSO- --max-redirect=0 google.com 2>&1 | grep Date: | cut -d' ' -f5-8)Z"
+          echo "release_tag=Release_$(date +"%Y.%m.%d_%H-%M-%S")" >> $GITHUB_OUTPUT
+          echo "release_hash=$(git log --format="%H" -n 1)" >> $GITHUB_OUTPUT
+          docker save eceasy/cli-proxy-api:latest -o cli-proxy-api_latest_arm64.tar
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          body: ${{ steps.tag.outputs.release_hash }}
+          tag_name: ${{ steps.tag.outputs.release_tag }}
+          files: |
+            ./cli-proxy-api_latest_arm64.tar*
+      # Done release
+
+# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+permissions:
+  contents: write
+  pages: write
+  id-token: write
